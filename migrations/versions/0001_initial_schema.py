@@ -30,17 +30,28 @@ def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
     op.execute("CREATE EXTENSION IF NOT EXISTS unaccent")
 
-    source_kind = postgresql.ENUM("rss", "api", "scrape", name="source_kind")
+    # `create_type=False` is load-bearing. Without it SQLAlchemy emits a
+    # CREATE TYPE again for every column that references the enum, so the
+    # first create_table fails with "type already exists" — after the explicit
+    # creation below has already succeeded. That leaves the database holding
+    # the types but no tables, and no alembic_version row to record progress.
+    #
+    # With create_type=False the explicit create(checkfirst=True) is the only
+    # thing that emits DDL, which also makes this migration re-runnable
+    # against a database left in that partial state.
+    enum_kwargs = {"create_type": False}
+
+    source_kind = postgresql.ENUM("rss", "api", "scrape", name="source_kind", **enum_kwargs)
     run_status = postgresql.ENUM(
         "pending", "running", "succeeded", "failed", "partial", "cancelled",
-        name="run_status",
+        name="run_status", **enum_kwargs,
     )
     post_status = postgresql.ENUM(
         "draft", "ready_for_review", "approved", "publishing", "published",
-        "failed", "rejected", name="post_status",
+        "failed", "rejected", name="post_status", **enum_kwargs,
     )
     publication_status = postgresql.ENUM(
-        "pending", "success", "failed", "skipped", name="publication_status"
+        "pending", "success", "failed", "skipped", name="publication_status", **enum_kwargs
     )
     for enum in (source_kind, run_status, post_status, publication_status):
         enum.create(op.get_bind(), checkfirst=True)
