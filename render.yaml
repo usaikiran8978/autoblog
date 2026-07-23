@@ -81,6 +81,14 @@ services:
       - key: LOG_LEVEL
         value: INFO
 
+      # The free tier has no preDeployCommand, so the schema is created on
+      # boot instead. Safe here because this service runs a single instance;
+      # on the paid blueprint the deploy hook does it once, and these stay off.
+      - key: AUTO_MIGRATE
+        value: "true"
+      - key: AUTO_SEED
+        value: "true"
+
       - key: DATABASE_URL
         fromDatabase:
           name: autoblog-db

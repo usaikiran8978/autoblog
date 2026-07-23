@@ -14,12 +14,23 @@
  * means same-origin, which is what the Vite dev proxy provides locally.
  */
 function resolveBase() {
-  const raw = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '')
+  let raw = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '')
   if (!raw) return ''
+
   if (/^https?:\/\//i.test(raw)) return raw
-  // localhost stays http; anything else is assumed to be TLS-terminated.
-  const scheme = /^localhost(:\d+)?$/i.test(raw) ? 'http' : 'https'
-  return `${scheme}://${raw}`
+
+  const isLocal = /^localhost(:\d+)?$/i.test(raw)
+
+  // Render's `fromService: property: host` yields the bare service name
+  // ("autoblog-api-7g9t"), not a fully-qualified host. Left alone that
+  // produces https://autoblog-api-7g9t, which does not resolve — the request
+  // fails at DNS and surfaces as "cannot reach the API". Qualify any single
+  // label that is not localhost.
+  if (!isLocal && !raw.includes('.')) {
+    raw = `${raw}.onrender.com`
+  }
+
+  return `${isLocal ? 'http' : 'https'}://${raw}`
 }
 
 const BASE = resolveBase()

@@ -17,6 +17,79 @@ from app.core.logging_conf import configure_logging, get_logger
 log = get_logger(__name__)
 
 
+async def _auto_migrate() -> None:
+    """Bring the database schema up to head at startup.
+
+    Only used where no pre-deploy hook exists (see AUTO_MIGRATE). Alembic is
+    synchronous and holds a transaction, so it runs in a worker thread to
+    avoid blocking the event loop.
+
+    Migration 0001 creates the `vector`, `pg_trgm` and `unaccent` extensions,
+    so a bare database becomes fully usable here.
+
+    A failure is logged but does not abort startup: the process still serves
+    /health, which is what you need in order to diagnose it. Endpoints that
+    touch the database will return 500 until it is resolved.
+    """
+    import asyncio
+    from pathlib import Path
+
+    from alembic import command
+    from alembic.config import Config
+
+    def _upgrade() -> None:
+        # WORKDIR is /app; alembic.ini sits beside migrations/ and backend/.
+        root = Path(__file__).resolve().parents[2]
+        cfg = Config(str(root / "alembic.ini"))
+        cfg.set_main_option("script_location", str(root / "migrations"))
+        cfg.set_main_option(
+            "sqlalchemy.url",
+            str(settings.DATABASE_URL).replace("postgresql+asyncpg://", "postgresql://", 1),
+        )
+        command.upgrade(cfg, "head")
+
+    try:
+        await asyncio.to_thread(_upgrade)
+        log.info("auto_migrate_completed")
+    except Exception as exc:
+        log.error("auto_migrate_failed", error=str(exc), exc_info=True)
+
+
+async def _auto_seed() -> None:
+    """Populate the source registry if it is empty. Idempotent and cheap."""
+    from sqlalchemy import func, select
+
+    from app.db.models import Source
+    from app.db.session import session_scope
+
+    try:
+        async with session_scope() as db:
+            count = await db.scalar(select(func.count(Source.id)))
+            if count:
+                log.info("auto_seed_skipped", existing_sources=count)
+                return
+
+        from app.services.source_registry import SEED_SOURCES
+        from app.db.models import SourceKind
+
+        async with session_scope() as db:
+            for entry in SEED_SOURCES:
+                db.add(
+                    Source(
+                        slug=entry["slug"],
+                        name=entry["name"],
+                        kind=SourceKind(entry["kind"]),
+                        url=entry["url"],
+                        categories=entry["categories"],
+                        trust_score=entry["trust"],
+                        config=entry.get("config", {}),
+                    )
+                )
+        log.info("auto_seed_completed", sources=len(SEED_SOURCES))
+    except Exception as exc:
+        log.error("auto_seed_failed", error=str(exc), exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
@@ -40,6 +113,12 @@ async def lifespan(app: FastAPI):
             # Never ship prompt/article bodies to an error tracker.
             send_default_pii=False,
         )
+
+    if settings.AUTO_MIGRATE:
+        await _auto_migrate()
+
+    if settings.AUTO_SEED:
+        await _auto_seed()
 
     if settings.VECTOR_BACKEND == "qdrant":
         from app.services.vector import get_vector_store

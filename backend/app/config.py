@@ -137,6 +137,14 @@ class Settings(BaseSettings):
     SCHEDULE: str = "0 9,18 * * *"  # 9:00 AM and 6:00 PM, TIMEZONE-local
     RUN_ON_STARTUP: bool = False
 
+    # Apply Alembic migrations (and seed the source registry) during API
+    # startup. Off by default: migrations normally belong in a deploy hook so
+    # they run exactly once, and concurrent instances racing `upgrade head` is
+    # a real hazard. Turn it on for single-instance hosting where no
+    # pre-deploy hook exists — Render's free tier, for example.
+    AUTO_MIGRATE: bool = False
+    AUTO_SEED: bool = False
+
     # ---------------------------------------------------------- pipeline
     COLLECT_LOOKBACK_HOURS: int = 24
     MAX_ITEMS_PER_SOURCE: int = 40
