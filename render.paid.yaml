@@ -1,0 +1,195 @@
+# Full-stack deployment blueprint — frontend AND backend, one platform.
+#
+# Provisions five services and two datastores:
+#   autoblog-frontend  static site   React SPA
+#   autoblog-api       web           FastAPI
+#   autoblog-worker    worker        Celery — executes the pipeline
+#   autoblog-beat      worker        Celery Beat — fires 09:00 / 18:00
+#   autoblog-redis     key value     broker · cache · rate limits
+#   autoblog-db        postgres 16   + pgvector
+#
+# Deploy:  push to GitHub → render.com → New → Blueprint → select repo → Apply
+# Then set the secrets marked `sync: false` in the dashboard.
+#
+# NOTE ON VERCEL: the frontend would also run happily on Vercel
+# (frontend/vercel.json is still here if you want it). The backend would not —
+# it needs two always-on processes, 5-20 minute runs, and stateful Postgres +
+# Redis, none of which fit a request-scoped serverless model.
+
+services:
+  # ------------------------------------------------------------- frontend
+  - type: web
+    name: autoblog-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      # Auto-wired from the API service — no URL to copy by hand. This yields
+      # a bare hostname (autoblog-api.onrender.com); lib/api.js prepends the
+      # scheme if one is missing.
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: autoblog-api
+          property: host
+    routes:
+      # SPA fallback. Without this, /post/:id and /dashboard 404 on hard
+      # refresh and on every shared link.
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: X-Frame-Options
+        value: SAMEORIGIN
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+  # ---------------------------------------------------------------- API
+  - type: web
+    name: autoblog-api
+    runtime: docker
+    dockerfilePath: ./docker/Dockerfile
+    dockerContext: .
+    plan: starter                      # 512 MB — fine for the API
+    healthCheckPath: /api/v1/health
+    # Migrations run ONCE here, before the new version goes live — not in the
+    # start command. Putting `alembic upgrade head` in the entrypoint races
+    # whenever a container restarts or a second instance boots.
+    preDeployCommand: alembic upgrade head
+    dockerCommand: >
+      uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2 --proxy-headers
+    envVars: &shared_env
+      - key: ENV
+        value: prod
+      - key: LOG_LEVEL
+        value: INFO
+
+      - key: DATABASE_URL
+        fromDatabase:
+          name: autoblog-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: autoblog-redis
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: autoblog-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: redis
+          name: autoblog-redis
+          property: connectionString
+
+      # Generated once by Render, shared across all three services.
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ADMIN_API_KEY
+        generateValue: true
+
+      # ---- set these in the dashboard (never committed) ----
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: WORDPRESS_URL
+        sync: false
+      - key: WORDPRESS_USERNAME
+        sync: false
+      - key: WORDPRESS_PASSWORD
+        sync: false
+      - key: ALERT_WEBHOOK_URL
+        sync: false
+
+      # Render assigns <service-name>.onrender.com. If the name was taken and
+      # Render appended a suffix, correct this in the dashboard and redeploy —
+      # the browser console will show a CORS error if it is wrong.
+      - key: CORS_ORIGINS
+        value: https://autoblog-frontend.onrender.com
+
+      - key: MODEL_PROVIDER
+        value: claude
+      - key: VECTOR_BACKEND
+        value: pgvector
+
+      - key: TIMEZONE
+        value: Asia/Kolkata
+      - key: SCHEDULE
+        value: 0 9,18 * * *
+
+      # Safety rails. Flip these once you trust the output — see README rollout.
+      - key: PUBLISH_TARGETS
+        value: markdown
+      - key: PUBLISH_STATUS
+        value: draft
+      - key: HUMAN_REVIEW
+        value: "true"
+      - key: DAILY_COST_LIMIT_USD
+        value: "10"
+
+      # Ephemeral disk on Render's free/starter tiers — push images to S3 in
+      # production or they vanish on redeploy.
+      - key: IMAGE_PROVIDER
+        value: openai
+      - key: IMAGE_STORAGE
+        value: local
+      - key: IMAGE_LOCAL_DIR
+        value: /data/images
+      - key: MARKDOWN_OUTPUT_DIR
+        value: /data/posts
+
+  # ------------------------------------------------------------- worker
+  - type: worker
+    name: autoblog-worker
+    runtime: docker
+    dockerfilePath: ./docker/Dockerfile
+    dockerContext: .
+    plan: standard                     # writer calls need headroom; 512 MB is tight
+    dockerCommand: >
+      celery -A app.workers.celery_app worker
+      --loglevel=info --concurrency=2
+      --queues=pipeline,maintenance
+      --max-tasks-per-child=50
+    envVars: *shared_env
+
+  # --------------------------------------------------------------- beat
+  # MUST stay at exactly one instance. Two Beat processes publish two editions
+  # per slot. Do not enable autoscaling on this service.
+  - type: worker
+    name: autoblog-beat
+    runtime: docker
+    dockerfilePath: ./docker/Dockerfile
+    dockerContext: .
+    plan: starter
+    dockerCommand: >
+      celery -A app.workers.celery_app beat
+      --loglevel=info --schedule=/tmp/celerybeat-schedule
+    envVars: *shared_env
+
+  # -------------------------------------------------------------- redis
+  # Newer Render accounts call this "Key Value" — if the blueprint is rejected,
+  # change `type: redis` to `type: keyvalue` here and in the fromService refs.
+  - type: redis
+    name: autoblog-redis
+    plan: starter
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []                    # private network only
+
+databases:
+  - name: autoblog-db
+    databaseName: autoblog
+    user: autoblog
+    plan: basic-256mb
+    postgresMajorVersion: "16"
+    # pgvector, pg_trgm and unaccent are created by migration 0001.

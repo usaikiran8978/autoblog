@@ -1,0 +1,147 @@
+# The free-tier scheduler.
+#
+# Render's free plan has NO background workers and NO cron jobs, so there is
+# nowhere to run Celery Beat or a Celery worker. GitHub Actions replaces both:
+# it fires on a cron schedule and runs the whole pipeline as a one-shot
+# process via `app.scripts.run_once`.
+#
+# PUBLIC repo → unlimited Actions minutes, so this is genuinely free.
+# Private repo → 2,000 min/month; a ~12 min run twice daily is ~720 min/month,
+# which still fits.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   ANTHROPIC_API_KEY   sk-ant-...
+#   OPENAI_API_KEY      sk-...   (embeddings — required even with MODEL_PROVIDER=claude)
+#   DATABASE_URL        the EXTERNAL Postgres connection string
+#
+# Optional secrets: REDIS_URL, WORDPRESS_*, ALERT_WEBHOOK_URL, S3_*, AWS_*
+# Optional variables (Settings → Variables): PUBLISH_TARGETS, PUBLISH_STATUS,
+#   HUMAN_REVIEW, IMAGE_PROVIDER, MODEL_PROVIDER, TIMEZONE, DAILY_COST_LIMIT_USD
+
+name: Publish
+
+on:
+  schedule:
+    # Actions cron is UTC. Defaults below target Asia/Kolkata (UTC+5:30):
+    #   03:30 UTC = 09:00 IST
+    #   12:30 UTC = 18:00 IST
+    # Change both if you change TIMEZONE. Note GitHub can delay scheduled
+    # runs by several minutes under load — fine for a publishing cadence.
+    - cron: '30 3 * * *'
+    - cron: '30 12 * * *'
+
+  workflow_dispatch:
+    inputs:
+      posts:
+        description: 'Posts to generate'
+        required: false
+        default: '1'
+      dry_run:
+        description: 'Dry run — collect, dedupe and rank only'
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  # Two overlapping runs would compete for the same publishing slot.
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    # Job-level env applies to every step. GitHub Actions does NOT support
+    # YAML anchors, so this is how shared config is expressed here.
+    env:
+      PYTHONPATH: backend
+
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      REDIS_URL: ${{ secrets.REDIS_URL || 'redis://localhost:6379/0' }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      # Config-model requires these; the pipeline never authenticates with them.
+      SECRET_KEY: ${{ secrets.SECRET_KEY || 'ci-placeholder-not-used-at-runtime-0000000000' }}
+      ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY || 'ci-placeholder-key' }}
+
+      MODEL_PROVIDER: ${{ vars.MODEL_PROVIDER || 'claude' }}
+      TIMEZONE: ${{ vars.TIMEZONE || 'Asia/Kolkata' }}
+      VECTOR_BACKEND: pgvector
+
+      # The runner's disk is destroyed when the job ends. Images therefore
+      # default to off; set IMAGE_PROVIDER + IMAGE_STORAGE=s3 with the S3_*
+      # secrets for durable hero images.
+      IMAGE_PROVIDER: ${{ vars.IMAGE_PROVIDER || 'none' }}
+      IMAGE_STORAGE: ${{ vars.IMAGE_STORAGE || 'local' }}
+      IMAGE_LOCAL_DIR: ${{ github.workspace }}/out/images
+      MARKDOWN_OUTPUT_DIR: ${{ github.workspace }}/out/posts
+      S3_BUCKET: ${{ secrets.S3_BUCKET }}
+      S3_PUBLIC_BASE_URL: ${{ vars.S3_PUBLIC_BASE_URL }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      PUBLISH_TARGETS: ${{ vars.PUBLISH_TARGETS || 'markdown' }}
+      PUBLISH_STATUS: ${{ vars.PUBLISH_STATUS || 'draft' }}
+      HUMAN_REVIEW: ${{ vars.HUMAN_REVIEW || 'true' }}
+      DAILY_COST_LIMIT_USD: ${{ vars.DAILY_COST_LIMIT_USD || '5' }}
+
+      WORDPRESS_URL: ${{ secrets.WORDPRESS_URL }}
+      WORDPRESS_USERNAME: ${{ secrets.WORDPRESS_USERNAME }}
+      WORDPRESS_PASSWORD: ${{ secrets.WORDPRESS_PASSWORD }}
+      ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+
+      - name: Fail fast on missing secrets
+        run: |
+          missing=()
+          [ -z "$DATABASE_URL" ] && missing+=("DATABASE_URL")
+          [ -z "$OPENAI_API_KEY" ] && missing+=("OPENAI_API_KEY (needed for embeddings)")
+          if [ "$MODEL_PROVIDER" = "claude" ] && [ -z "$ANTHROPIC_API_KEY" ]; then
+            missing+=("ANTHROPIC_API_KEY")
+          fi
+          if [ ${#missing[@]} -gt 0 ]; then
+            printf 'Missing repository secrets:\n'
+            printf '  - %s\n' "${missing[@]}"
+            printf '\nSet them under Settings → Secrets and variables → Actions.\n'
+            exit 1
+          fi
+          echo "All required secrets present."
+
+      - name: Migrate
+        run: alembic upgrade head
+
+      - name: Seed sources
+        # Idempotent: updates existing rows, inserts new ones.
+        run: python -c "from app.workers.tasks import seed_sources; print(seed_sources())"
+
+      - name: Run pipeline
+        run: |
+          mkdir -p out/images out/posts
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            python -m app.scripts.run_once --dry-run
+          else
+            python -m app.scripts.run_once --posts "${{ github.event.inputs.posts || '1' }}"
+          fi
+
+      - name: Upload generated posts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: posts-${{ github.run_number }}
+          path: out/
+          if-no-files-found: ignore
+          retention-days: 30

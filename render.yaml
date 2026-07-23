@@ -1,41 +1,49 @@
-# Full-stack deployment blueprint — frontend AND backend, one platform.
+# FREE-TIER blueprint. Costs $0 on Render.
 #
-# Provisions five services and two datastores:
-#   autoblog-frontend  static site   React SPA
-#   autoblog-api       web           FastAPI
-#   autoblog-worker    worker        Celery — executes the pipeline
-#   autoblog-beat      worker        Celery Beat — fires 09:00 / 18:00
-#   autoblog-redis     key value     broker · cache · rate limits
-#   autoblog-db        postgres 16   + pgvector
+# ── What changed vs. the full deployment (render.paid.yaml) ─────────────────
 #
-# Deploy:  push to GitHub → render.com → New → Blueprint → select repo → Apply
-# Then set the secrets marked `sync: false` in the dashboard.
+# Render's free plan has NO background workers and NO cron jobs. There is
+# therefore nowhere to run the Celery worker or Celery Beat, so this blueprint
+# omits both. The pipeline instead runs in GitHub Actions on a cron schedule —
+# see .github/workflows/publish.yml. Same agents, same order, same output; the
+# only thing missing is the queue, which a one-shot process does not need.
 #
-# NOTE ON VERCEL: the frontend would also run happily on Vercel
-# (frontend/vercel.json is still here if you want it). The backend would not —
-# it needs two always-on processes, 5-20 minute runs, and stateful Postgres +
-# Redis, none of which fit a request-scoped serverless model.
+#   autoblog-frontend  static site  free   React SPA
+#   autoblog-api       web          free   FastAPI (read-only in practice)
+#   autoblog-db        postgres     free   ⚠ EXPIRES AFTER 30 DAYS
+#   autoblog-redis     key value    free   25 MB — cache + rate limits
+#   [pipeline]         GitHub Actions      09:00 / 18:00 IST
+#
+# ── Free-tier limits you will actually notice ───────────────────────────────
+#
+# 1. The API spins down after ~15 min idle. The first request afterwards takes
+#    ~50 s to wake. The frontend shows a loading state, then works normally.
+# 2. Render's free Postgres is DELETED after 30 days. Before then either
+#    upgrade it (~$6/mo) or move to Neon's free tier, which does not expire
+#    and also supports pgvector — see docs/DEPLOY.md.
+# 3. Triggering a run from the dashboard UI will NOT work: POST /runs enqueues
+#    to Celery, and there is no worker consuming that queue. Trigger from the
+#    GitHub Actions tab instead (Publish → Run workflow).
+#
+# To move to the always-on deployment later: rename render.paid.yaml to
+# render.yaml, push, and re-apply the blueprint.
 
 services:
   # ------------------------------------------------------------- frontend
   - type: web
     name: autoblog-frontend
     runtime: static
+    plan: free
     rootDir: frontend
     buildCommand: npm ci && npm run build
     staticPublishPath: ./dist
     envVars:
-      # Auto-wired from the API service — no URL to copy by hand. This yields
-      # a bare hostname (autoblog-api.onrender.com); lib/api.js prepends the
-      # scheme if one is missing.
       - key: VITE_API_URL
         fromService:
           type: web
           name: autoblog-api
           property: host
     routes:
-      # SPA fallback. Without this, /post/:id and /dashboard 404 on hard
-      # refresh and on every shared link.
       - type: rewrite
         source: /*
         destination: /index.html
@@ -52,21 +60,20 @@ services:
       - path: /*
         name: Referrer-Policy
         value: strict-origin-when-cross-origin
-  # ---------------------------------------------------------------- API
+
+  # ------------------------------------------------------------------ API
+  # Serves the reader UI's data. Migrations are applied by the GitHub Actions
+  # workflow, not here — `preDeployCommand` requires a paid instance type.
   - type: web
     name: autoblog-api
     runtime: docker
+    plan: free
     dockerfilePath: ./docker/Dockerfile
     dockerContext: .
-    plan: starter                      # 512 MB — fine for the API
     healthCheckPath: /api/v1/health
-    # Migrations run ONCE here, before the new version goes live — not in the
-    # start command. Putting `alembic upgrade head` in the entrypoint races
-    # whenever a container restarts or a second instance boots.
-    preDeployCommand: alembic upgrade head
     dockerCommand: >
-      uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2 --proxy-headers
-    envVars: &shared_env
+      uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1 --proxy-headers
+    envVars:
       - key: ENV
         value: prod
       - key: LOG_LEVEL
@@ -81,40 +88,21 @@ services:
           type: redis
           name: autoblog-redis
           property: connectionString
-      - key: CELERY_BROKER_URL
-        fromService:
-          type: redis
-          name: autoblog-redis
-          property: connectionString
-      - key: CELERY_RESULT_BACKEND
-        fromService:
-          type: redis
-          name: autoblog-redis
-          property: connectionString
 
-      # Generated once by Render, shared across all three services.
       - key: SECRET_KEY
         generateValue: true
       - key: ADMIN_API_KEY
         generateValue: true
 
-      # ---- set these in the dashboard (never committed) ----
+      # Set in the dashboard. The API itself only needs these for the
+      # /preview endpoint; the pipeline runs in GitHub Actions.
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: OPENAI_API_KEY
         sync: false
-      - key: WORDPRESS_URL
-        sync: false
-      - key: WORDPRESS_USERNAME
-        sync: false
-      - key: WORDPRESS_PASSWORD
-        sync: false
-      - key: ALERT_WEBHOOK_URL
-        sync: false
 
-      # Render assigns <service-name>.onrender.com. If the name was taken and
-      # Render appended a suffix, correct this in the dashboard and redeploy —
-      # the browser console will show a CORS error if it is wrong.
+      # If the service name was taken, Render appends a suffix — correct this
+      # here or the browser console shows a CORS error.
       - key: CORS_ORIGINS
         value: https://autoblog-frontend.onrender.com
 
@@ -122,13 +110,9 @@ services:
         value: claude
       - key: VECTOR_BACKEND
         value: pgvector
-
       - key: TIMEZONE
         value: Asia/Kolkata
-      - key: SCHEDULE
-        value: 0 9,18 * * *
 
-      # Safety rails. Flip these once you trust the output — see README rollout.
       - key: PUBLISH_TARGETS
         value: markdown
       - key: PUBLISH_STATUS
@@ -136,60 +120,26 @@ services:
       - key: HUMAN_REVIEW
         value: "true"
       - key: DAILY_COST_LIMIT_USD
-        value: "10"
-
-      # Ephemeral disk on Render's free/starter tiers — push images to S3 in
-      # production or they vanish on redeploy.
+        value: "5"
       - key: IMAGE_PROVIDER
-        value: openai
-      - key: IMAGE_STORAGE
-        value: local
-      - key: IMAGE_LOCAL_DIR
-        value: /data/images
-      - key: MARKDOWN_OUTPUT_DIR
-        value: /data/posts
+        value: none
 
-  # ------------------------------------------------------------- worker
-  - type: worker
-    name: autoblog-worker
-    runtime: docker
-    dockerfilePath: ./docker/Dockerfile
-    dockerContext: .
-    plan: standard                     # writer calls need headroom; 512 MB is tight
-    dockerCommand: >
-      celery -A app.workers.celery_app worker
-      --loglevel=info --concurrency=2
-      --queues=pipeline,maintenance
-      --max-tasks-per-child=50
-    envVars: *shared_env
-
-  # --------------------------------------------------------------- beat
-  # MUST stay at exactly one instance. Two Beat processes publish two editions
-  # per slot. Do not enable autoscaling on this service.
-  - type: worker
-    name: autoblog-beat
-    runtime: docker
-    dockerfilePath: ./docker/Dockerfile
-    dockerContext: .
-    plan: starter
-    dockerCommand: >
-      celery -A app.workers.celery_app beat
-      --loglevel=info --schedule=/tmp/celerybeat-schedule
-    envVars: *shared_env
-
-  # -------------------------------------------------------------- redis
-  # Newer Render accounts call this "Key Value" — if the blueprint is rejected,
-  # change `type: redis` to `type: keyvalue` here and in the fromService refs.
+  # ---------------------------------------------------------------- redis
+  # If the blueprint is rejected on this block, your account uses the newer
+  # naming: change `type: redis` to `type: keyvalue` here and in the
+  # fromService reference above.
   - type: redis
     name: autoblog-redis
-    plan: starter
+    plan: free
     maxmemoryPolicy: allkeys-lru
-    ipAllowList: []                    # private network only
+    ipAllowList: []
 
 databases:
   - name: autoblog-db
     databaseName: autoblog
     user: autoblog
-    plan: basic-256mb
+    plan: free
     postgresMajorVersion: "16"
-    # pgvector, pg_trgm and unaccent are created by migration 0001.
+    # ⚠ Free Postgres is deleted 30 days after creation. Diarise it.
+    # The GitHub Actions workflow needs the EXTERNAL connection string —
+    # copy it from the dashboard into the DATABASE_URL repo secret.

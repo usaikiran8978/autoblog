@@ -1,7 +1,106 @@
 # Deployment
 
-**Everything on Render**, provisioned from one blueprint file.
-[`render.yaml`](../render.yaml) declares all seven pieces:
+Two paths. Pick one.
+
+| | **Free** ([`render.yaml`](../render.yaml)) | **Always-on** ([`render.paid.yaml`](../render.paid.yaml)) |
+|---|---|---|
+| Cost | **$0** infra + ~$26/mo LLM | ~$55/mo infra + ~$26/mo LLM |
+| Scheduler | GitHub Actions cron | Celery Beat |
+| Pipeline runs on | GitHub Actions runner | Celery worker |
+| API | Sleeps after 15 min idle (~50 s cold start) | Always warm |
+| Database | Render free — **deleted after 30 days** | Managed, persistent |
+| Trigger from dashboard UI | ✗ (no worker) — use the Actions tab | ✓ |
+
+**Why there is no free always-on option:** Render's free plan has no
+background workers and no cron jobs. Celery Beat and the Celery worker are
+both long-lived processes, so neither can exist there. GitHub Actions replaces
+both — it runs [`app/scripts/run_once.py`](../backend/app/scripts/run_once.py),
+which drives the same Coordinator through the same agents in the same order.
+The only thing missing is the queue, which a one-shot process doesn't need.
+
+Jump to: [Free deployment](#free-deployment) · [Always-on deployment](#always-on-deployment)
+
+---
+
+# Free deployment
+
+## 1 — Apply the blueprint
+
+**[render.com/deploy?repo=https://github.com/usaikiran8978/autoblog](https://render.com/deploy?repo=https://github.com/usaikiran8978/autoblog)**
+
+Creates four free services: static frontend, API, Postgres, Key Value.
+No card required.
+
+## 2 — Copy the database URL
+
+Render dashboard → `autoblog-db` → **External Connection String**. You need the
+*external* one; GitHub's runners are outside Render's private network.
+
+## 3 — Add repository secrets
+
+GitHub repo → **Settings → Secrets and variables → Actions → New secret**:
+
+| Secret | Value |
+|---|---|
+| `DATABASE_URL` | the external string from step 2 |
+| `ANTHROPIC_API_KEY` | `sk-ant-...` |
+| `OPENAI_API_KEY` | `sk-...` — **required for embeddings even on Claude** |
+
+The workflow fails fast with a readable message if any are missing.
+
+## 4 — Run it
+
+GitHub → **Actions → Publish → Run workflow**. Tick **dry run** for the first
+one: it collects, deduplicates and ranks for ~$0.03 without writing anything,
+which proves the database and sources work before you spend on a writer call.
+
+Then run it for real. Generated posts are attached to the workflow run as a
+downloadable artifact, and the article appears in the reader UI.
+
+After that it fires automatically at 03:30 and 12:30 UTC (09:00 / 18:00 IST).
+
+## Free-tier limits worth knowing
+
+**The database is deleted after 30 days.** Render's free Postgres is not
+permanent. Before then, either upgrade it (~$6/mo) or move to
+**[Neon](https://neon.tech)** — the free tier doesn't expire, supports
+pgvector, and only requires swapping the `DATABASE_URL` secret.
+
+**The API sleeps after 15 minutes idle.** The first visit takes ~50 s to wake;
+the frontend shows a loading state meanwhile. Only affects the reader UI —
+the pipeline runs on GitHub's infrastructure and is unaffected.
+
+**Images are off by default.** The Actions runner's disk is destroyed when the
+job ends, so a generated hero image would vanish. Posts publish without one.
+To enable them, set repo variable `IMAGE_PROVIDER=openai`, `IMAGE_STORAGE=s3`,
+and the `S3_BUCKET` / `AWS_*` secrets.
+
+**Don't trigger runs from the dashboard UI.** `POST /runs` enqueues to Celery,
+and there's no worker consuming that queue on the free tier — the request
+succeeds and nothing happens. Use the Actions tab.
+
+## Tuning without touching code
+
+Repo → Settings → **Variables** (not secrets):
+
+| Variable | Default | Effect |
+|---|---|---|
+| `PUBLISH_STATUS` | `draft` | `publish` to go live |
+| `HUMAN_REVIEW` | `true` | `false` for fully autonomous |
+| `PUBLISH_TARGETS` | `markdown` | `wordpress`, `ghost`, … |
+| `IMAGE_PROVIDER` | `none` | `openai`, `flux` |
+| `DAILY_COST_LIMIT_USD` | `5` | hard budget stop |
+
+To change the schedule, edit the two `cron:` lines in
+[`.github/workflows/publish.yml`](../.github/workflows/publish.yml) — they're
+in **UTC**.
+
+---
+
+# Always-on deployment
+
+Rename `render.paid.yaml` → `render.yaml`, push, and re-apply the blueprint.
+[`render.paid.yaml`](../render.paid.yaml) declares all seven pieces:
 
 | Service | Type | Role |
 |---|---|---|
