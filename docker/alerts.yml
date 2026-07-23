@@ -1,0 +1,91 @@
+groups:
+  - name: autoblog-pipeline
+    rules:
+      # The alert that actually matters: are we publishing?
+      - alert: NoPostsPublished
+        expr: increase(autoblog_posts_published_total{status="ok"}[14h]) == 0
+        for: 30m
+        labels: {severity: critical}
+        annotations:
+          summary: "No posts published in 14 hours"
+          description: >
+            Expected 2 posts/day. Check `GET /api/v1/health/deep`, the Celery
+            beat container, and the last pipeline_runs row.
+
+      - alert: PipelineFailureRate
+        expr: |
+          sum(rate(autoblog_pipeline_runs_total{status="failed"}[6h]))
+            / sum(rate(autoblog_pipeline_runs_total[6h])) > 0.5
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: "Over half of pipeline runs are failing"
+
+      - alert: PipelineDurationHigh
+        expr: histogram_quantile(0.9, rate(autoblog_pipeline_duration_seconds_bucket[6h])) > 2400
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "p90 pipeline duration above 40 minutes"
+
+  - name: autoblog-cost
+    rules:
+      - alert: DailyBudgetExceeded
+        expr: autoblog_daily_spend_usd > 25
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "24h LLM spend exceeded the configured budget"
+          description: "Pipeline runs are now being rejected by the budget guard."
+
+      - alert: CostPerRunSpike
+        expr: |
+          sum(increase(autoblog_llm_cost_usd_total[1h]))
+            / clamp_min(sum(increase(autoblog_pipeline_runs_total[1h])), 1) > 3
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Cost per pipeline run above $3 — check for a retry loop"
+
+  - name: autoblog-sources
+    rules:
+      - alert: SourceErrorRateHigh
+        expr: sum(rate(autoblog_source_errors_total[1h])) > 0.05
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Elevated source fetch errors"
+
+      - alert: DedupeCollapse
+        expr: |
+          sum(increase(autoblog_duplicates_dropped_total[24h]))
+            / clamp_min(sum(increase(autoblog_articles_collected_total[24h])), 1) < 0.05
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "Dedupe is dropping almost nothing — embeddings may be failing"
+
+  - name: autoblog-infra
+    rules:
+      - alert: QueueBacklog
+        expr: autoblog_queue_depth{queue="pipeline"} > 10
+        for: 20m
+        labels: {severity: warning}
+        annotations:
+          summary: "Pipeline queue backing up — workers may be stuck or undersized"
+
+      - alert: LLMErrorRate
+        expr: |
+          sum(rate(autoblog_llm_requests_total{status="error"}[15m]))
+            / clamp_min(sum(rate(autoblog_llm_requests_total[15m])), 0.001) > 0.2
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Over 20% of LLM calls are failing"
+
+      - alert: APIDown
+        expr: up{job="autoblog-api"} == 0
+        for: 3m
+        labels: {severity: critical}
+        annotations:
+          summary: "AutoBlog API is not responding to scrapes"

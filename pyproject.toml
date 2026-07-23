@@ -1,0 +1,82 @@
+[project]
+name = "autoblog"
+version = "1.0.0"
+description = "AI-powered tech blog automation platform"
+requires-python = ">=3.11"
+
+dependencies = [
+  # web
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  "pydantic>=2.9",
+  "pydantic-settings>=2.6",
+  "python-multipart>=0.0.12",
+
+  # data
+  "sqlalchemy[asyncio]>=2.0.36",
+  "asyncpg>=0.30",
+  "psycopg[binary]>=3.2",
+  "alembic>=1.14",
+  "pgvector>=0.3.6",
+
+  # queue / cache
+  "celery[redis]>=5.4",
+  "redis>=5.2",
+  "flower>=2.0",
+
+  # ai
+  "anthropic>=0.69",
+  "openai>=1.60",
+  "tiktoken>=0.8",
+  "numpy>=2.0",
+
+  # collection
+  "httpx>=0.28",
+  "feedparser>=6.0.11",
+  "beautifulsoup4>=4.12",
+  "lxml>=5.3",
+  "trafilatura>=2.0",
+  "python-dateutil>=2.9",
+  "tenacity>=9.0",
+
+  # publishing
+  "python-slugify>=8.0",
+  "markdown-it-py>=3.0",
+  "pyjwt>=2.10",
+  "boto3>=1.35",
+
+  # ops
+  "structlog>=24.4",
+  "prometheus-client>=0.21",
+  "prometheus-fastapi-instrumentator>=7.0",
+  "sentry-sdk>=2.19",
+]
+
+[project.optional-dependencies]
+qdrant = ["qdrant-client>=1.12"]
+local-embeddings = ["sentence-transformers>=3.3"]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "pytest-cov>=6.0",
+  "respx>=0.22",
+  "ruff>=0.8",
+  "mypy>=1.13",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "RUF"]
+ignore = ["S101", "B008"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["backend/tests"]
+
+[tool.mypy]
+python_version = "3.11"
+plugins = ["pydantic.mypy"]
+ignore_missing_imports = true

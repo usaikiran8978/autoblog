@@ -1,0 +1,209 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===========================================================================
+   Theme tokens. One accent, high contrast, generous whitespace.
+   Deliberately not the default "purple gradient on white" look — this is a
+   crisp editorial/terminal palette: warm paper in light, near-black in dark,
+   one signal-orange accent used sparingly for emphasis only.
+   =========================================================================== */
+@layer base {
+  :root {
+    --canvas: 250 250 249;   /* warm paper */
+    --surface: 255 255 255;
+    --raised: 245 245 244;
+    --ink: 24 24 27;
+    --muted: 82 82 91;
+    --faint: 161 161 170;
+    --line: 228 228 231;
+    --accent: 234 88 12;     /* signal orange */
+    --accent-soft: 255 237 213;
+  }
+
+  .dark {
+    --canvas: 10 10 11;
+    --surface: 20 20 22;
+    --raised: 28 28 32;
+    --ink: 250 250 249;
+    --muted: 161 161 170;
+    --faint: 113 113 122;
+    --line: 39 39 42;
+    --accent: 251 146 60;
+    --accent-soft: 67 33 12;
+  }
+
+  * {
+    @apply border-line;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-canvas text-ink font-sans antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Visible, on-brand focus ring for keyboard users. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-canvas rounded;
+  }
+
+  ::selection {
+    @apply bg-accent/25;
+  }
+
+  /* Scrollbar — subtle, matches the theme rather than the OS default. */
+  ::-webkit-scrollbar { width: 11px; height: 11px; }
+  ::-webkit-scrollbar-track { @apply bg-transparent; }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-line rounded-full border-[3px] border-solid border-canvas;
+  }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-faint; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/* ===========================================================================
+   Components
+   =========================================================================== */
+@layer components {
+  .shell {
+    @apply mx-auto w-full max-w-shell px-5 sm:px-8;
+  }
+
+  /* Small uppercase mono label — used for categories, metadata, stat titles.
+     This is the detail that makes the whole UI read as "technical publication"
+     rather than "generic blog template". */
+  .label {
+    @apply font-mono text-2xs uppercase tracking-[0.14em] text-faint;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-line
+           bg-surface px-3 py-1.5 font-mono text-2xs uppercase tracking-[0.1em]
+           text-muted transition-colors duration-150
+           hover:border-accent/50 hover:text-ink;
+  }
+
+  .chip-active {
+    @apply border-accent bg-accent text-white hover:text-white
+           dark:text-canvas dark:hover:text-canvas;
+  }
+
+  .card {
+    @apply relative rounded-2xl border border-line bg-surface
+           transition-all duration-300 ease-out;
+  }
+
+  .card-hover {
+    @apply hover:-translate-y-1 hover:border-accent/40
+           hover:shadow-[0_18px_40px_-24px_rgb(0_0_0/0.35)];
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5
+           text-sm font-medium transition-all duration-150 disabled:opacity-45
+           disabled:pointer-events-none;
+  }
+
+  .btn-primary {
+    @apply btn bg-ink text-canvas hover:bg-accent hover:text-white
+           dark:hover:text-canvas;
+  }
+
+  .btn-ghost {
+    @apply btn border border-line bg-surface text-muted
+           hover:border-accent/50 hover:text-ink;
+  }
+
+  .skeleton {
+    @apply animate-shimmer rounded-lg bg-raised;
+  }
+
+  /* Thin gradient rule used to separate major page sections. */
+  .rule {
+    @apply h-px w-full bg-gradient-to-r from-transparent via-line to-transparent;
+  }
+}
+
+/* ===========================================================================
+   Article typography. Hand-rolled instead of @tailwindcss/typography so the
+   vertical rhythm and link treatment match the rest of the design exactly.
+   =========================================================================== */
+@layer components {
+  .article {
+    @apply text-[1.0625rem] leading-[1.75] text-ink;
+  }
+
+  .article > * + * { @apply mt-6; }
+
+  .article h2 {
+    @apply mt-14 scroll-mt-24 text-2xl font-bold tracking-tight sm:text-[1.75rem];
+  }
+  /* Accent tick before every H2 — cheap, distinctive, reinforces the palette. */
+  .article h2::before {
+    content: '';
+    @apply mb-3 block h-1 w-9 rounded-full bg-accent;
+  }
+
+  .article h3 {
+    @apply mt-10 scroll-mt-24 text-xl font-semibold tracking-tight;
+  }
+
+  .article p { @apply text-muted; }
+  .article strong { @apply font-semibold text-ink; }
+
+  .article a {
+    @apply font-medium text-ink underline decoration-accent/45 decoration-2
+           underline-offset-[3px] transition-colors hover:decoration-accent;
+  }
+
+  .article ul, .article ol { @apply space-y-2.5 pl-1 text-muted; }
+  .article ul > li { @apply relative pl-6; }
+  .article ul > li::before {
+    content: '';
+    @apply absolute left-1 top-[0.7em] h-1.5 w-1.5 rounded-full bg-accent/60;
+  }
+  .article ol { @apply list-decimal space-y-2.5 pl-6 marker:font-mono
+                       marker:text-sm marker:text-faint; }
+
+  .article blockquote {
+    @apply border-l-2 border-accent bg-raised/60 py-4 pl-6 pr-5 text-ink
+           rounded-r-xl not-italic;
+  }
+
+  .article code {
+    @apply rounded-md bg-raised px-1.5 py-0.5 font-mono text-[0.85em] text-ink;
+  }
+
+  .article pre {
+    @apply overflow-x-auto rounded-xl border border-line bg-raised p-5
+           font-mono text-sm leading-relaxed;
+  }
+  .article pre code { @apply bg-transparent p-0 text-ink; }
+
+  .article img { @apply w-full rounded-xl border border-line; }
+
+  /* Tables scroll inside their own container rather than breaking the page. */
+  .article .table-wrap { @apply -mx-1 overflow-x-auto; }
+  .article table { @apply w-full min-w-[34rem] border-collapse text-sm; }
+  .article th {
+    @apply border-b border-line px-3 py-2.5 text-left font-mono text-2xs
+           uppercase tracking-wider text-faint;
+  }
+  .article td { @apply border-b border-line/60 px-3 py-2.5 align-top text-muted; }
+  .article tbody tr:last-child td { @apply border-b-0; }
+
+  .article hr { @apply my-12 rule border-0; }
+}

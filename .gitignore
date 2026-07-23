@@ -1,0 +1,70 @@
+# ---------------------------------------------------------------- secrets
+# The single most important lines in this file. Every API key in this project
+# lives in .env — committing it once means rotating every credential.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+service-account*.json
+
+# ------------------------------------------------------------------ python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+
+# ------------------------------------------------------------------- node
+node_modules/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# frontend build output
+frontend/dist/
+
+# ----------------------------------------------------------------- runtime
+# Generated hero images, published markdown, celery beat state.
+/data/
+data/
+celerybeat-schedule*
+celerybeat.pid
+*.rdb
+*.log
+
+# ------------------------------------------------------------------ deploy
+.vercel
+.render
+
+# --------------------------------------------------------------------- os
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ------------------------------------------------------------------- ide
+.idea/
+.vscode/
+!.vscode/extensions.json
+*.swp
+*.swo

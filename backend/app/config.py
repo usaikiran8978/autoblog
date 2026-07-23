@@ -1,0 +1,152 @@
+"""Central configuration. Every tunable lives here and is driven by .env."""
+
+from __future__ import annotations
+
+from functools import lru_cache
+from typing import Literal
+
+from pydantic import Field, PostgresDsn, RedisDsn, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=False
+    )
+
+    # ---------------------------------------------------------------- app
+    APP_NAME: str = "autoblog"
+    ENV: Literal["dev", "staging", "prod"] = "dev"
+    LOG_LEVEL: str = "INFO"
+    API_PREFIX: str = "/api/v1"
+    ADMIN_API_KEY: str = Field(..., min_length=16)
+    SECRET_KEY: str = Field(..., min_length=32)
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:5173",  # vite dev
+        "http://localhost:4173",  # vite preview
+        "http://localhost:3000",
+    ]
+
+    # ---------------------------------------------------------- datastores
+    DATABASE_URL: PostgresDsn
+    REDIS_URL: RedisDsn
+    CELERY_BROKER_URL: RedisDsn | None = None
+    CELERY_RESULT_BACKEND: RedisDsn | None = None
+
+    # Vector store. `pgvector` keeps the stack to one database; `qdrant`
+    # is the escape hatch once the corpus outgrows a single Postgres box.
+    VECTOR_BACKEND: Literal["pgvector", "qdrant"] = "pgvector"
+    QDRANT_URL: str | None = None
+    QDRANT_API_KEY: str | None = None
+    QDRANT_COLLECTION: str = "articles"
+
+    # ---------------------------------------------------------------- LLM
+    MODEL_PROVIDER: Literal["openai", "claude"] = "claude"
+    OPENAI_API_KEY: str | None = None
+    ANTHROPIC_API_KEY: str | None = None
+
+    # Two tiers: `SMART` writes the article, `FAST` does classification,
+    # ranking rationales and social copy. Splitting them is the single
+    # biggest cost lever in the pipeline (see docs/BLUEPRINT.md §14).
+    OPENAI_MODEL_SMART: str = "gpt-5.1"
+    OPENAI_MODEL_FAST: str = "gpt-5.1-mini"
+    ANTHROPIC_MODEL_SMART: str = "claude-opus-4-8"
+    ANTHROPIC_MODEL_FAST: str = "claude-haiku-4-5"
+    ANTHROPIC_EFFORT: Literal["low", "medium", "high", "xhigh", "max"] = "high"
+
+    EMBEDDING_PROVIDER: Literal["openai", "local"] = "openai"
+    EMBEDDING_MODEL: str = "text-embedding-3-small"
+    EMBEDDING_DIM: int = 1536
+    LOCAL_EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+
+    LLM_MAX_RETRIES: int = 4
+    LLM_TIMEOUT_SECONDS: int = 600
+    LLM_MAX_CONCURRENCY: int = 6
+
+    # -------------------------------------------------------------- images
+    IMAGE_PROVIDER: Literal["openai", "flux", "stability", "none"] = "openai"
+    OPENAI_IMAGE_MODEL: str = "gpt-image-1"
+    IMAGE_SIZE: str = "1536x1024"  # closest 16:9-ish size the API offers
+    REPLICATE_API_TOKEN: str | None = None
+    FLUX_MODEL: str = "black-forest-labs/flux-1.1-pro"
+    STABILITY_API_KEY: str | None = None
+    IMAGE_STORAGE: Literal["local", "s3"] = "local"
+    IMAGE_LOCAL_DIR: str = "/data/images"
+    S3_BUCKET: str | None = None
+    S3_REGION: str = "us-east-1"
+    S3_PUBLIC_BASE_URL: str | None = None
+
+    # ---------------------------------------------------------- publishing
+    PUBLISH_TARGETS: list[str] = ["markdown"]  # wordpress|ghost|medium|custom|markdown
+    PUBLISH_STATUS: Literal["draft", "publish"] = "draft"
+
+    WORDPRESS_URL: str | None = None
+    WORDPRESS_USERNAME: str | None = None
+    WORDPRESS_PASSWORD: str | None = None  # application password, not login pw
+
+    GHOST_ADMIN_API_URL: str | None = None
+    GHOST_ADMIN_API_KEY: str | None = None  # "<id>:<secret>"
+
+    MEDIUM_INTEGRATION_TOKEN: str | None = None
+    MEDIUM_AUTHOR_ID: str | None = None
+
+    CUSTOM_CMS_URL: str | None = None
+    CUSTOM_CMS_TOKEN: str | None = None
+
+    MARKDOWN_OUTPUT_DIR: str = "/data/posts"
+    SITE_BASE_URL: str = "https://example.com"
+    SITE_NAME: str = "Example Tech Blog"
+    AUTHOR_NAME: str = "Editorial Desk"
+
+    # --------------------------------------------------------- scheduling
+    TIMEZONE: str = "Asia/Kolkata"
+    SCHEDULE: str = "0 9,18 * * *"  # 9:00 AM and 6:00 PM, TIMEZONE-local
+    RUN_ON_STARTUP: bool = False
+
+    # ---------------------------------------------------------- pipeline
+    COLLECT_LOOKBACK_HOURS: int = 24
+    MAX_ITEMS_PER_SOURCE: int = 40
+    DEDUPE_SIMILARITY_THRESHOLD: float = 0.86
+    RANK_TOP_N: int = 10
+    ARTICLE_MIN_WORDS: int = 1500
+    ARTICLE_MAX_WORDS: int = 2500
+    POSTS_PER_RUN: int = 1
+    HUMAN_REVIEW: bool = False  # True => stop at `ready_for_review`
+
+    HTTP_USER_AGENT: str = "AutoBlogBot/1.0 (+https://example.com/bot)"
+    SCRAPE_ENABLED: bool = True
+    RESPECT_ROBOTS_TXT: bool = True
+    REQUEST_TIMEOUT_SECONDS: int = 20
+
+    # ------------------------------------------------------------ budget
+    DAILY_COST_LIMIT_USD: float = 25.0
+    ALERT_WEBHOOK_URL: str | None = None
+    SENTRY_DSN: str | None = None
+
+    @field_validator("CORS_ORIGINS", "PUBLISH_TARGETS", mode="before")
+    @classmethod
+    def _split_csv(cls, v):
+        if isinstance(v, str):
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return v
+
+    @property
+    def broker_url(self) -> str:
+        return str(self.CELERY_BROKER_URL or self.REDIS_URL)
+
+    @property
+    def result_backend(self) -> str:
+        return str(self.CELERY_RESULT_BACKEND or self.REDIS_URL)
+
+    @property
+    def sqlalchemy_url(self) -> str:
+        """asyncpg driver for the app, psycopg for Alembic (see migrations/env.py)."""
+        return str(self.DATABASE_URL).replace("postgresql://", "postgresql+asyncpg://", 1)
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()  # type: ignore[call-arg]
+
+
+settings = get_settings()
