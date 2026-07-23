@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI):
         vector_backend=settings.VECTOR_BACKEND,
         schedule=settings.SCHEDULE,
         timezone=settings.TIMEZONE,
-        publish_targets=settings.PUBLISH_TARGETS,
+        publish_targets=settings.publish_targets,
     )
 
     if settings.SENTRY_DSN:
@@ -76,7 +76,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["*"],

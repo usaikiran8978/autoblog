@@ -5,8 +5,30 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, PostgresDsn, RedisDsn, field_validator
+from pydantic import Field, PostgresDsn, RedisDsn
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _as_list(raw: str | list[str] | None) -> list[str]:
+    """Parse a delimited setting into a list.
+
+    Accepts CSV (`a,b,c`) and JSON (`["a","b"]`), because operators reach for
+    both and a deploy should not fail over the difference.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+
+    value = raw.strip()
+    if value.startswith("["):
+        import json
+
+        try:
+            return [str(x).strip() for x in json.loads(value) if str(x).strip()]
+        except (json.JSONDecodeError, TypeError):
+            pass  # fall through to CSV
+    return [part.strip() for part in value.split(",") if part.strip()]
 
 
 class Settings(BaseSettings):
@@ -21,11 +43,14 @@ class Settings(BaseSettings):
     API_PREFIX: str = "/api/v1"
     ADMIN_API_KEY: str = Field(..., min_length=16)
     SECRET_KEY: str = Field(..., min_length=32)
-    CORS_ORIGINS: list[str] = [
-        "http://localhost:5173",  # vite dev
-        "http://localhost:4173",  # vite preview
-        "http://localhost:3000",
-    ]
+    # Comma-separated, NOT list[str].
+    #
+    # pydantic-settings JSON-decodes complex types (list, dict) inside the env
+    # source *before* any validator runs, so a plain CSV env var raises
+    # SettingsError and no `mode="before"` validator can rescue it. Keeping
+    # these as `str` and parsing in a property is version-proof.
+    # Read via `settings.cors_origins`.
+    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:4173,http://localhost:3000"
 
     # ---------------------------------------------------------- datastores
     DATABASE_URL: PostgresDsn
@@ -77,7 +102,8 @@ class Settings(BaseSettings):
     S3_PUBLIC_BASE_URL: str | None = None
 
     # ---------------------------------------------------------- publishing
-    PUBLISH_TARGETS: list[str] = ["markdown"]  # wordpress|ghost|medium|custom|markdown
+    # Comma-separated. Read via `settings.publish_targets`. See CORS_ORIGINS.
+    PUBLISH_TARGETS: str = "markdown"  # wordpress|ghost|medium|custom|markdown
     PUBLISH_STATUS: Literal["draft", "publish"] = "draft"
 
     WORDPRESS_URL: str | None = None
@@ -123,12 +149,13 @@ class Settings(BaseSettings):
     ALERT_WEBHOOK_URL: str | None = None
     SENTRY_DSN: str | None = None
 
-    @field_validator("CORS_ORIGINS", "PUBLISH_TARGETS", mode="before")
-    @classmethod
-    def _split_csv(cls, v):
-        if isinstance(v, str):
-            return [x.strip() for x in v.split(",") if x.strip()]
-        return v
+    @property
+    def cors_origins(self) -> list[str]:
+        return _as_list(self.CORS_ORIGINS)
+
+    @property
+    def publish_targets(self) -> list[str]:
+        return _as_list(self.PUBLISH_TARGETS)
 
     @property
     def broker_url(self) -> str:

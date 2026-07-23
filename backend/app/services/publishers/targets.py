@@ -398,7 +398,7 @@ PUBLISHERS: dict[str, type[Publisher]] = {
 def get_publishers() -> list[Publisher]:
     """Instantiate configured targets, skipping any missing credentials."""
     result: list[Publisher] = []
-    for name in settings.PUBLISH_TARGETS:
+    for name in settings.publish_targets:
         cls = PUBLISHERS.get(name.strip())
         if not cls:
             log.warning("unknown_publish_target", target=name)
