@@ -33,7 +33,9 @@ services:
   - type: web
     name: autoblog-frontend
     runtime: static
-    plan: free
+    # NO `plan` key here. Static sites have no instance type — they are always
+    # free, and Render rejects the blueprint if you specify one:
+    #   "no such plan free for service type web"
     rootDir: frontend
     buildCommand: npm ci && npm run build
     staticPublishPath: ./dist
