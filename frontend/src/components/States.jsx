@@ -48,23 +48,37 @@ export function ArticleSkeleton() {
 }
 
 export function ErrorState({ error, onRetry }) {
-  const offline = error?.status === 0
+  // status 0 means the request never completed — DNS, CORS, or a sleeping
+  // host. An HTTP status means the API answered and something else is wrong.
+  const unreachable = error?.status === 0
+  const serverError = error?.status >= 500
+
+  let title = 'Something went wrong'
+  let hint = null
+
+  if (unreachable) {
+    title = 'Cannot reach the API'
+    hint = import.meta.env.DEV
+      ? 'Start the backend with `make up`.'
+      : 'The API may be waking from sleep — this can take up to a minute on free hosting. If it persists, the API is likely rejecting this origin (CORS).'
+  } else if (serverError) {
+    title = 'The API returned an error'
+    hint =
+      'This usually means the database has not been migrated yet. Run the publish workflow once to create the schema.'
+  }
+
   return (
     <div className="flex flex-col items-center gap-4 py-24 text-center">
       <span className="grid h-14 w-14 place-items-center rounded-2xl bg-accent-soft text-accent">
         <AlertTriangle size={24} />
       </span>
       <div className="max-w-md space-y-1.5">
-        <h2 className="text-lg font-semibold">
-          {offline ? 'Cannot reach the API' : 'Something went wrong'}
-        </h2>
+        <h2 className="text-lg font-semibold">{title}</h2>
         <p className="text-sm leading-relaxed text-muted">
           {error?.message || 'An unexpected error occurred.'}
         </p>
-        {offline && (
-          <p className="pt-2 font-mono text-2xs text-faint">
-            Start the backend with <span className="text-accent">make up</span>
-          </p>
+        {hint && (
+          <p className="pt-2 text-xs leading-relaxed text-faint">{hint}</p>
         )}
       </div>
       {onRetry && (

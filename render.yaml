@@ -103,10 +103,15 @@ services:
       - key: OPENAI_API_KEY
         sync: false
 
-      # If the service name was taken, Render appends a suffix — correct this
-      # here or the browser console shows a CORS error.
+      # Render appends a random suffix when a service name is taken
+      # (autoblog-frontend -> autoblog-frontend-a1b2.onrender.com), so the
+      # exact origin is unknowable here. The regex matches the real host
+      # whatever the suffix, while staying narrow enough that unrelated
+      # Render sites are still rejected.
       - key: CORS_ORIGINS
         value: https://autoblog-frontend.onrender.com
+      - key: CORS_ORIGIN_REGEX
+        value: '^https://autoblog-frontend[a-z0-9-]*\.onrender\.com$'
 
       - key: MODEL_PROVIDER
         value: claude

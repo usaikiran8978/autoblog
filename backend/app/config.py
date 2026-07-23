@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     # Read via `settings.cors_origins`.
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:4173,http://localhost:3000"
 
+    # Regex alternative, checked in addition to the exact list above.
+    #
+    # PaaS platforms append a random suffix when a service name is taken
+    # (autoblog-frontend -> autoblog-frontend-a1b2.onrender.com), so an exact
+    # origin cannot be known at blueprint-authoring time. A narrow pattern
+    # matches the real host without opening the API to every origin.
+    CORS_ORIGIN_REGEX: str | None = None
+
     # ---------------------------------------------------------- datastores
     DATABASE_URL: PostgresDsn
     REDIS_URL: RedisDsn

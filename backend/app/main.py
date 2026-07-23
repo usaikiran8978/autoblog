@@ -77,6 +77,9 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
+    # Matched in addition to the exact list — covers PaaS-assigned hostname
+    # suffixes that cannot be known when the deployment config is written.
+    allow_origin_regex=settings.CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["*"],
