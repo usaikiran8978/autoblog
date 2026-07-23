@@ -1,5 +1,7 @@
 # AutoBlog
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/usaikiran8978/autoblog)
+
 An AI-powered tech blog automation platform. It collects technology news from
 ~30 trusted sources, removes duplicates semantically, ranks what matters,
 writes original 1500–2500 word analysis, generates SEO metadata and a hero
