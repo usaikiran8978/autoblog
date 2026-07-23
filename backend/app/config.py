@@ -9,6 +9,57 @@ from pydantic import Field, PostgresDsn, RedisDsn
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+_PG_SCHEMES = (
+    "postgresql+asyncpg://",
+    "postgresql+psycopg://",
+    "postgresql+psycopg2://",
+    "postgresql://",
+    "postgres://",
+)
+
+
+def _pg_url(raw: object, driver: str, *, drop_sslmode: bool = False) -> str:
+    """Pin a Postgres URL to an explicit driver.
+
+    Three traps this defuses, all of which produce confusing runtime failures:
+
+    * A bare ``postgresql://`` makes SQLAlchemy default to **psycopg2**, which
+      this project does not ship — it ships psycopg 3. Alembic then dies with
+      ``ModuleNotFoundError: No module named 'psycopg2'`` and the schema is
+      never created.
+    * Several platforms still hand out the legacy ``postgres://`` scheme,
+      which SQLAlchemy rejects outright.
+    * ``?sslmode=require`` is valid for psycopg but asyncpg does not accept it
+      and raises ``unexpected keyword argument 'sslmode'``. Managed providers
+      routinely append it to external connection strings.
+    """
+    url = str(raw)
+
+    for scheme in _PG_SCHEMES:
+        if url.startswith(scheme):
+            url = f"{driver}://{url[len(scheme):]}"
+            break
+
+    if drop_sslmode and "sslmode=" in url:
+        from urllib.parse import urlencode, urlsplit, urlunsplit
+
+        parts = urlsplit(url)
+        query = [
+            (k, v)
+            for k, v in (
+                pair.split("=", 1) if "=" in pair else (pair, "")
+                for pair in parts.query.split("&")
+                if pair
+            )
+            if k != "sslmode"
+        ]
+        url = urlunsplit(
+            (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
+        )
+
+    return url
+
+
 def _as_list(raw: str | list[str] | None) -> list[str]:
     """Parse a delimited setting into a list.
 
@@ -183,8 +234,13 @@ class Settings(BaseSettings):
 
     @property
     def sqlalchemy_url(self) -> str:
-        """asyncpg driver for the app, psycopg for Alembic (see migrations/env.py)."""
-        return str(self.DATABASE_URL).replace("postgresql://", "postgresql+asyncpg://", 1)
+        """Async URL for the application engine."""
+        return _pg_url(self.DATABASE_URL, "postgresql+asyncpg", drop_sslmode=True)
+
+    @property
+    def sync_database_url(self) -> str:
+        """Sync URL for Alembic. Must name psycopg explicitly — see _pg_url."""
+        return _pg_url(self.DATABASE_URL, "postgresql+psycopg")
 
 
 @lru_cache

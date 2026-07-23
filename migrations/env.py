@@ -20,7 +20,9 @@ if config.config_file_name:
     fileConfig(config.config_file_name)
 
 # psycopg (sync) for migrations, regardless of the app's async driver.
-sync_url = str(settings.DATABASE_URL).replace("postgresql+asyncpg://", "postgresql://", 1)
+# Built by config so the driver is named explicitly — a bare postgresql://
+# would resolve to psycopg2, which this project does not ship.
+sync_url = settings.sync_database_url
 config.set_main_option("sqlalchemy.url", sync_url)
 
 target_metadata = Base.metadata

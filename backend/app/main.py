@@ -42,10 +42,9 @@ async def _auto_migrate() -> None:
         root = Path(__file__).resolve().parents[2]
         cfg = Config(str(root / "alembic.ini"))
         cfg.set_main_option("script_location", str(root / "migrations"))
-        cfg.set_main_option(
-            "sqlalchemy.url",
-            str(settings.DATABASE_URL).replace("postgresql+asyncpg://", "postgresql://", 1),
-        )
+        # Must be the psycopg-qualified URL: a bare postgresql:// resolves to
+        # psycopg2, which is not installed.
+        cfg.set_main_option("sqlalchemy.url", settings.sync_database_url)
         command.upgrade(cfg, "head")
 
     try:
