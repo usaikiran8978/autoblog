@@ -1,16 +1,57 @@
-# Backend deployment blueprint.
+# Full-stack deployment blueprint — frontend AND backend, one platform.
 #
-# WHY NOT VERCEL: this stack needs two always-on processes (a Celery worker and
-# a Beat scheduler), pipeline runs lasting 5-20 minutes, and stateful Postgres +
-# Redis. Vercel functions are request-scoped and capped in the low minutes, with
-# no persistent process model. The frontend belongs on Vercel; this does not.
+# Provisions five services and two datastores:
+#   autoblog-frontend  static site   React SPA
+#   autoblog-api       web           FastAPI
+#   autoblog-worker    worker        Celery — executes the pipeline
+#   autoblog-beat      worker        Celery Beat — fires 09:00 / 18:00
+#   autoblog-redis     key value     broker · cache · rate limits
+#   autoblog-db        postgres 16   + pgvector
 #
-# Deploy:  push this repo to GitHub → render.com → New → Blueprint → pick repo
-# Then set the secrets marked `sync: false` in the Render dashboard.
+# Deploy:  push to GitHub → render.com → New → Blueprint → select repo → Apply
+# Then set the secrets marked `sync: false` in the dashboard.
 #
-# Equivalent setups for other platforms are noted in docs/BLUEPRINT.md §10.
+# NOTE ON VERCEL: the frontend would also run happily on Vercel
+# (frontend/vercel.json is still here if you want it). The backend would not —
+# it needs two always-on processes, 5-20 minute runs, and stateful Postgres +
+# Redis, none of which fit a request-scoped serverless model.
 
 services:
+  # ------------------------------------------------------------- frontend
+  - type: web
+    name: autoblog-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      # Auto-wired from the API service — no URL to copy by hand. This yields
+      # a bare hostname (autoblog-api.onrender.com); lib/api.js prepends the
+      # scheme if one is missing.
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: autoblog-api
+          property: host
+    routes:
+      # SPA fallback. Without this, /post/:id and /dashboard 404 on hard
+      # refresh and on every shared link.
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: X-Frame-Options
+        value: SAMEORIGIN
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
   # ---------------------------------------------------------------- API
   - type: web
     name: autoblog-api
@@ -71,9 +112,11 @@ services:
       - key: ALERT_WEBHOOK_URL
         sync: false
 
-      # ---- CHANGE THIS to your Vercel URL after the frontend deploys ----
+      # Render assigns <service-name>.onrender.com. If the name was taken and
+      # Render appended a suffix, correct this in the dashboard and redeploy —
+      # the browser console will show a CORS error if it is wrong.
       - key: CORS_ORIGINS
-        value: https://autoblog.vercel.app
+        value: https://autoblog-frontend.onrender.com
 
       - key: MODEL_PROVIDER
         value: claude

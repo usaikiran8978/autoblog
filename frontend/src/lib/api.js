@@ -6,7 +6,23 @@
  * to the public API origin.
  */
 
-const BASE = import.meta.env.VITE_API_URL || ''
+/**
+ * Resolve the API origin.
+ *
+ * Render's `fromService: property: host` injects a bare hostname
+ * ("autoblog-api.onrender.com") with no scheme, so we add one. An empty value
+ * means same-origin, which is what the Vite dev proxy provides locally.
+ */
+function resolveBase() {
+  const raw = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '')
+  if (!raw) return ''
+  if (/^https?:\/\//i.test(raw)) return raw
+  // localhost stays http; anything else is assumed to be TLS-terminated.
+  const scheme = /^localhost(:\d+)?$/i.test(raw) ? 'http' : 'https'
+  return `${scheme}://${raw}`
+}
+
+const BASE = resolveBase()
 const PREFIX = '/api/v1'
 
 class ApiError extends Error {

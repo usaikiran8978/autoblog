@@ -11,7 +11,7 @@ pipeline.
 
 📘 **[Full engineering blueprint →](docs/BLUEPRINT.md)** — architecture,
 diagrams, schema, API, deployment, security, scaling, cost.
-🚀 **[Deployment runbook →](docs/DEPLOY.md)** — frontend to Vercel, backend to Render.
+🚀 **[Deployment runbook →](docs/DEPLOY.md)** — full stack on Render, one blueprint.
 
 ---
 
