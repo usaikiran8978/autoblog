@@ -126,10 +126,45 @@ runs_router = APIRouter(prefix="/runs", tags=["runs"])
 )
 async def trigger_run(payload: TriggerRunRequest) -> RunAccepted:
     """Queue a pipeline run. Returns immediately with a Celery task id — a run
-    takes 5-20 minutes, far past any sane HTTP timeout."""
+    takes 5-20 minutes, far past any sane HTTP timeout.
+
+    Enqueuing requires a broker *and* a worker consuming it. On deployments
+    without an always-on worker (e.g. Render's free tier, where the pipeline
+    runs in GitHub Actions instead) the broker is unreachable, so we translate
+    the connection error into an actionable 503 rather than a 500 traceback.
+    """
+    from kombu.exceptions import OperationalError
+
+    from app.workers.celery_app import celery_app
     from app.workers.tasks import run_pipeline
 
-    task = run_pipeline.delay(trigger=payload.trigger, posts=payload.posts)
+    no_worker = HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=(
+            "No pipeline worker is reachable. This deployment runs the "
+            "pipeline in GitHub Actions, not from here — open the repo's "
+            "Actions tab and run the 'Publish' workflow (tick 'dry run' "
+            "first). Dashboard triggering needs the always-on worker from "
+            "the paid blueprint."
+        ),
+    )
+
+    # Probe the broker with a bounded timeout BEFORE enqueuing. apply_async
+    # itself re-wraps a refused connection as a bare RuntimeError (verified
+    # against celery 5.4), which is unsafe to catch broadly; ensure_connection
+    # raises a clean, catchable OperationalError and — crucially — cannot hang
+    # the request against an unreachable or sleeping broker.
+    try:
+        with celery_app.connection_for_write() as conn:
+            conn.ensure_connection(max_retries=0, timeout=4)
+    except (OperationalError, ConnectionError, OSError) as exc:
+        raise no_worker from exc
+
+    task = run_pipeline.apply_async(
+        kwargs={"trigger": payload.trigger, "posts": payload.posts},
+        retry=False,
+    )
+
     return RunAccepted(
         task_id=task.id,
         message=f"pipeline queued (trigger={payload.trigger}); poll GET /runs/{{id}}",

@@ -83,6 +83,12 @@ function RunTrigger({ onDone }) {
   return (
     <div className="card space-y-3 p-5">
       <p className="label">Trigger a run</p>
+      <p className="text-xs leading-relaxed text-muted">
+        Needs the always-on worker. On a free deployment the pipeline runs in
+        GitHub Actions instead — open the repo's{' '}
+        <span className="font-medium text-ink">Actions → Publish</span> tab and
+        run the workflow (tick “dry run” first).
+      </p>
       <div className="flex flex-col gap-2 sm:flex-row">
         <input
           type="password"
